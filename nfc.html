@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestionnaire de Cartes NFC</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .card {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        button.delete {
+            background-color: #f44336;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100px;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .info {
+            background-color: #d9edf7;
+            color: #31708f;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gestionnaire de Cartes NFC</h1>
+        
+        <div class="section">
+            <h2>Ajouter une nouvelle carte</h2>
+            <div>
+                <input type="text" id="cardId" placeholder="ID de la carte (ex: 308)">
+                <button id="scanButton">Scanner la carte NFC</button>
+            </div>
+            <div id="scanStatus" class="status" style="display: none;"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Mes Cartes</h2>
+            <div id="cardsList">
+                <!-- Les cartes seront affichées ici -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Stockage des cartes dans localStorage
+        let nfcCards = JSON.parse(localStorage.getItem('nfcCards')) || [];
+        
+        // Éléments DOM
+        const cardIdInput = document.getElementById('cardId');
+        const scanButton = document.getElementById('scanButton');
+        const scanStatus = document.getElementById('scanStatus');
+        const cardsList = document.getElementById('cardsList');
+        
+        // Vérifier la disponibilité de l'API Web NFC
+        const isNFCSupported = ('NDEFReader' in window);
+        
+        if (!isNFCSupported) {
+            showStatus("L'API NFC n'est pas supportée par votre navigateur.", 'error');
+            scanButton.disabled = true;
+        }
+        
+        // Afficher les cartes au chargement
+        displayCards();
+        
+        // Écouteur pour le bouton de scan
+        scanButton.addEventListener('click', async () => {
+            const cardId = cardIdInput.value.trim();
+            
+            if (!cardId) {
+                showStatus("Veuillez entrer un ID de carte", 'error');
+                return;
+            }
+            
+            if (nfcCards.some(card => card.id === cardId)) {
+                showStatus("Cet ID de carte existe déjà", 'error');
+                return;
+            }
+            
+            try {
+                showStatus("Approchez une carte NFC...", 'info');
+                
+                const ndef = new NDEFReader();
+                await ndef.scan();
+                
+                ndef.addEventListener('reading', ({ serialNumber }) => {
+                    // Vérifier si cette carte existe déjà
+                    if (nfcCards.some(card => card.serial === serialNumber)) {
+                        showStatus("Cette carte NFC est déjà enregistrée", 'error');
+                        return;
+                    }
+                    
+                    // Ajouter la nouvelle carte
+                    nfcCards.push({
+                        id: cardId,
+                        serial: serialNumber
+                    });
+                    
+                    // Sauvegarder et afficher
+                    saveCards();
+                    displayCards();
+                    
+                    showStatus(`Carte "${cardId}" enregistrée avec succès!`, 'success');
+                    cardIdInput.value = '';
+                });
+                
+                // Timeout après 20 secondes
+                setTimeout(() => {
+                    ndef.removeEventListener('reading', () => {});
+                    showStatus("Délai d'attente dépassé", 'error');
+                }, 20000);
+                
+            } catch (error) {
+                showStatus(`Erreur NFC: ${error.message}`, 'error');
+            }
+        });
+        
+        // Fonction pour afficher les cartes
+        function displayCards() {
+            cardsList.innerHTML = '';
+            
+            if (nfcCards.length === 0) {
+                cardsList.innerHTML = '<p>Aucune carte enregistrée</p>';
+                return;
+            }
+            
+            nfcCards.forEach(card => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'card';
+                
+                cardElement.innerHTML = `
+                    <span>ID: ${card.id} - Serial: ${card.serial}</span>
+                    <div>
+                        <button class="emit" data-serial="${card.serial}">Émettre</button>
+                        <button class="delete" data-serial="${card.serial}">Supprimer</button>
+                    </div>
+                `;
+                
+                cardsList.appendChild(cardElement);
+            });
+            
+            // Ajouter les écouteurs pour les boutons
+            document.querySelectorAll('.emit').forEach(button => {
+                button.addEventListener('click', () => emitNFCTag(button.dataset.serial));
+            });
+            
+            document.querySelectorAll('.delete').forEach(button => {
+                button.addEventListener('click', () => deleteCard(button.dataset.serial));
+            });
+        }
+        
+        // Fonction pour émettre un tag NFC
+        async function emitNFCTag(serialNumber) {
+            if (!isNFCSupported) {
+                showStatus("L'API NFC n'est pas supportée", 'error');
+                return;
+            }
+            
+            try {
+                showStatus("Prêt à émettre le tag NFC. Approchez un lecteur...", 'info');
+                
+                const ndef = new NDEFReader();
+                const card = nfcCards.find(c => c.serial === serialNumber);
+                
+                if (!card) {
+                    showStatus("Carte non trouvée", 'error');
+                    return;
+                }
+                
+                // Créer un message NDEF
+                const message = {
+                    records: [
+                        {
+                            recordType: "text",
+                            data: `ID:${card.id}`,
+                            mediaType: "text/plain"
+                        }
+                    ]
+                };
+                
+                await ndef.write(message);
+                showStatus(`Tag NFC "${card.id}" émis avec succès!`, 'success');
+                
+            } catch (error) {
+                showStatus(`Erreur d'émission: ${error.message}`, 'error');
+            }
+        }
+        
+        // Fonction pour supprimer une carte
+        function deleteCard(serialNumber) {
+            nfcCards = nfcCards.filter(card => card.serial !== serialNumber);
+            saveCards();
+            displayCards();
+            showStatus("Carte supprimée", 'success');
+        }
+        
+        // Fonction pour sauvegarder les cartes
+        function saveCards() {
+            localStorage.setItem('nfcCards', JSON.stringify(nfcCards));
+        }
+        
+        // Fonction pour afficher les messages de statut
+        function showStatus(message, type) {
+            scanStatus.textContent = message;
+            scanStatus.className = `status ${type}`;
+            scanStatus.style.display = 'block';
+            
+            // Masquer après 5 secondes
+            setTimeout(() => {
+                scanStatus.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
